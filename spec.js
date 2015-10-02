@@ -6,6 +6,11 @@ const assert = require('assert'),
 
 let app;
 
+function* gen(next) {
+  yield 1;
+  yield next;
+}
+
 beforeEach(function() {
   app = koa();
 });
@@ -21,7 +26,7 @@ it('works', function(done) {
   });
   app.use(inject({
     foo: function() {
-      return 1
+      return 1;
     },
     bar: function(foo) {
       return new Promise(function(resolve) {
@@ -33,11 +38,13 @@ it('works', function(done) {
     baz: function(bar) {
       assert.equal(this.blah, 'blah');
       return bar + 'baz';
-    }
+    },
+    blip: gen
   }));
-  app.use(inject(function* (next, foo, baz) {
+  app.use(inject(function* (next, foo, baz, blip) {
     fooValue = foo;
     bazValue = baz;
+    console.log(blip);
     yield* next;
   }));
   app.use(inject(function* (bar) {
@@ -75,6 +82,14 @@ it('throws on cyclic dependency', function() {
     inject({
       c: function(d) {},
       d: function(c) {}
+    });
+  });
+});
+
+it('throws on non-function provider', function() {
+  assert.throws(function() {
+    inject({
+      f: 1
     });
   });
 });

@@ -10,7 +10,7 @@ function check(dependencies) {
     if (dependency === 'next' || dependency in providers) {
       return;
     }
-  
+
     throw new Error('No provider for: ' + dependency);
   });
 }
@@ -48,11 +48,12 @@ module.exports = function(arg) {
       const fn = arg[key];
 
       if (typeof fn === 'function') {
-        const parameters = getParameterNames(value);
+        const parameters = getParameterNames(fn);
 
         parameters.forEach(parameter => {
           if (parameter === 'next') {
-            throw new Error('next is not available to a provider');
+            //throw new Error('next is not available to a provider');
+            return;
           }
 
           edges.push([parameter, key]);
@@ -65,9 +66,9 @@ module.exports = function(arg) {
 
           return fn.apply(ctx, deps);
         };
+      } else {
+        throw new Error(`Provider #{key} must be a function`);
       }
-
-      throw new Error('Provider must be a function');
     });
 
     check(edges.map(edge => { return edge[0]; }));
@@ -79,14 +80,10 @@ module.exports = function(arg) {
       yield Promise.all(sorted.map(series(function(key) {
         return Promise.resolve()
           .then(function() {
-            if (ctx[key]) {
-              return ctx[key];
-            }
-
             return providers[key](ctx);
           })
           .then(function(value) {
-            ctx[key] = value;
+            ctx[key] = ctx[key] || value;
           });
       })));
 
