@@ -1,0 +1,24 @@
+{
+  "name": "@microservice/koa-inject",
+  "version": "1.0.0",
+  "description": "simple dependency injection for koa",
+  "main": "inject.js",
+  "scripts": {
+    "lint": "eslint inject.js spec.js",
+    "test": "mocha spec.js"
+  },
+  "repository": "https://github.com/node-microservice/koa-inject",
+  "author": "Doug Moscrop <doug.moscrop@gmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "eslint": "^1.5.1",
+    "koa": "^1.0.0",
+    "mocha": "^2.3.3",
+    "supertest": "^1.1.0"
+  },
+  "dependencies": {
+    "co-series": "^1.0.0",
+    "get-parameter-names": "^0.2.0",
+    "toposort": "^0.2.12"
+  }
+}
