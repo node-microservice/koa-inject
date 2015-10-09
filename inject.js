@@ -13,25 +13,26 @@ function check(dependency) {
   throw new Error(`${dependency} is not registered`);
 }
 
-function inject(fn, dependencies, key) {
-  let provider = co.wrap(fn);
-  return function* (next) {
-    let ctx = this;
-    const args = dependencies.map(dependency => {
-      return dependency === 'next' ? next : ctx[dependency];
-    });
-    yield provider.apply(ctx, args).then(function(value) {
-      if (key) {
-        ctx[key] = ctx[key] || value;
+function inject(fn, dependencies) {
+  let wrapped = co.wrap(fn);
+  return function(next, provides) {
+    return function* () {
+      const ctx = this;
+      const args = dependencies.map(dependency => {
+        return dependency === 'next' ? next : ctx[dependency];
+      });
+      yield wrapped.apply(ctx, args).then(function(value) {
+        if (provides) {
+          const provided = (ctx[provides] = ctx[provides] || value);
 
-        if (ctx[key]) {
-          return;
+          if (provided) {
+            return;
+          }
+
+          throw new Error(`Dependency not provided! (did your middleware set this.${provides}?)`);
         }
-
-        throw new Error(`Dependency not provided! (did your middleware set this.${key}?)`);
-      }
-    });
-    yield* next;
+      });
+    }
   };
 }
 
@@ -41,7 +42,11 @@ module.exports = function(arg) {
 
     parameters.forEach(check);
 
-    return inject(arg, parameters);
+    const injected = inject(arg, parameters);
+
+    return function* (next) {
+      yield injected(next);
+    };
   } else if (arg && typeof arg === 'object') {
     const nodes = [],
       edges = [];
@@ -69,18 +74,22 @@ module.exports = function(arg) {
         });
 
         nodes.push(key);
-        registry[key] = inject(fn, parameters, key);
+        registry[key] = inject(fn, parameters);
       } else {
         throw new Error(`${key} must be a provider function`);
       }
     });
 
-    const dependencies = compose(sort.array(nodes, edges).map(key => {
-      return registry[key];
+    const providers = compose(sort.array(nodes, edges).map(key => {
+      const provider = registry[key];
+      return function* (next) {
+        yield provider(next, key);
+        yield* next;
+      }
     }));
 
     return function* (next) {
-      yield dependencies;
+      yield providers;
       yield* next;
     };
   } else {
