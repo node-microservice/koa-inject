@@ -1,7 +1,7 @@
 'use strict';
-const co = require('co'),
-  compose =  require('koa-compose'),
+const compose =  require('koa-compose'),
   getParameterNames = require('get-parameter-names'),
+  isGeneratorFn = require('is-generator').fn,
   sort = require('toposort');
 
 const registry = {};
@@ -13,27 +13,30 @@ function check(dependency) {
   throw new Error(`${dependency} is not registered`);
 }
 
-function inject(fn, dependencies) {
-  let wrapped = co.wrap(fn);
-  return function(next, provides) {
-    return function* () {
+function inject(fn, parameters, provides) {
+    const generator = isGeneratorFn(fn);
+
+    return function*(next) {
       const ctx = this;
-      const args = dependencies.map(dependency => {
-        return dependency === 'next' ? next : ctx[dependency];
+      const dependencies = parameters.map(parameter => {
+        return parameter === 'next' ? next : ctx[parameter];
       });
-      yield wrapped.apply(ctx, args).then(function(value) {
-        if (provides) {
-          const provided = (ctx[provides] = ctx[provides] || value);
+      const result = fn.apply(ctx, dependencies);
 
-          if (provided) {
-            return;
+      if (generator) {
+        yield result;
+      } else {
+        yield Promise.resolve(result).then(function(value) {
+          if (provides) {
+            ctx[provides] = value;
           }
+        });
+      }
 
-          throw new Error(`Dependency not provided! (did your middleware set this.${provides}?)`);
-        }
-      });
-    }
-  };
+      if (provides && ctx[provides] === undefined) {
+        throw new Error(`value not provided, did your provider set this.${provides}?`);
+      }
+    };
 }
 
 module.exports = function(arg) {
@@ -42,14 +45,9 @@ module.exports = function(arg) {
 
     parameters.forEach(check);
 
-    const injected = inject(arg, parameters);
-
-    return function* (next) {
-      yield injected(next);
-    };
+    return inject(arg, parameters);
   } else if (arg && typeof arg === 'object') {
-    const nodes = [],
-      edges = [];
+    const nodes = [], edges = [];
 
     Object.keys(arg).forEach(key => {
       if (key in registry) {
@@ -74,16 +72,15 @@ module.exports = function(arg) {
         });
 
         nodes.push(key);
-        registry[key] = inject(fn, parameters);
+        registry[key] = inject(fn, parameters, key);
       } else {
         throw new Error(`${key} must be a provider function`);
       }
     });
 
     const providers = compose(sort.array(nodes, edges).map(key => {
-      const provider = registry[key];
       return function* (next) {
-        yield provider(next, key);
+        yield registry[key].call(this, next);
         yield* next;
       }
     }));

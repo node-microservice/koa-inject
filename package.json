@@ -17,8 +17,8 @@
     "supertest": "^1.1.0"
   },
   "dependencies": {
-    "co": "^4.6.0",
     "get-parameter-names": "^0.2.0",
+    "is-generator": "^1.0.2",
     "koa-compose": "^2.3.0",
     "toposort": "^0.2.12"
   }

@@ -37,18 +37,21 @@ it('works', function(done) {
   });
   app.use(inject({
     foo: function() {
-      return 1;
+      return Promise.resolve(1);
     },
-    bar: function(foo) {
-      return new Promise(function(resolve) {
+    bar: function*(foo) {
+      const bar = yield new Promise(function(resolve) {
         setTimeout(function() {
           resolve('bar' + foo);
         }, 200);
-      })
+      });
+
+      this.bar = bar;
     },
-    baz: function(bar) {
+    baz: function* (bar) {
       assert.equal(this.blah, 'blah');
-      return bar + 'baz';
+      const baz = yield Promise.resolve(bar + 'baz');
+      this.baz = baz;
     },
     blip: function* (next) {
       this.blip = 'blip'
@@ -76,10 +79,32 @@ it('works', function(done) {
     });
 });
 
+it('does not call a function that is returned', function(done) {
+  app.use(inject({
+    func: function() {
+      return function() {
+        throw new Error('dont call');
+      };
+    }
+  }));
+
+  app.use(inject(function* (func) {
+    assert.equal(typeof func, 'function');
+    this.status = 204;
+  }));
+
+  supertest(app.callback())
+    .get('/')
+    .expect(204)
+    .end(done);
+});
+
 it('errors when middleware does not set this[key]', function(done) {
   app.use(inject({
     asdf: function* (next) {
-      this.fail = 'fail';
+      yield new Promise(function(resolve) {
+        setTimeout(resolve, 500);
+      })
       yield* next;
     }
   }));
