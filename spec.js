@@ -15,10 +15,9 @@ it('passes through', function(done) {
     let status = yield new Promise(resolve => {
       setTimeout(function() {
         resolve(201);
-      }, 500);
+      }, 300);
     });
     this.status = status;
-    yield* next;
   }));
   supertest(app.callback())
     .get('/')
@@ -43,7 +42,7 @@ it('works', function(done) {
       const bar = yield new Promise(function(resolve) {
         setTimeout(function() {
           resolve('bar' + foo);
-        }, 200);
+        }, 300);
       });
 
       this.bar = bar;
@@ -79,6 +78,7 @@ it('works', function(done) {
     });
 });
 
+// this is important to make things like constructor objects (Mongoose models, as an example) available for inejction.
 it('does not call a function that is returned', function(done) {
   app.use(inject({
     func: function() {
@@ -99,11 +99,37 @@ it('does not call a function that is returned', function(done) {
     .end(done);
 });
 
+it('lets you use .get inside a timeout', function(done) {
+  function getQwerty() {
+    return new Promise(resolve => {
+      setTimeout(() => {
+        resolve(inject.get('qwerty'));
+      }, 300);
+    });
+  }
+
+  app.use(inject({
+    qwerty: function () {
+      return 'qwerty';
+    }
+  }));
+  app.use(function*(next) {
+    const qwerty = yield getQwerty();
+    assert.equal(qwerty, 'qwerty');
+    this.status = 202;
+  });
+
+  supertest(app.callback())
+    .get('/')
+    .expect(202)
+    .end(done);
+});
+
 it('errors when middleware does not set this[key]', function(done) {
   app.use(inject({
     asdf: function* (next) {
       yield new Promise(function(resolve) {
-        setTimeout(resolve, 500);
+        setTimeout(resolve, 300);
       })
       yield* next;
     }

@@ -1,10 +1,14 @@
 'use strict';
-const compose =  require('koa-compose'),
+
+const assert = require('assert'),
+  compose =  require('koa-compose'),
   getParameterNames = require('get-parameter-names'),
+  cls = require('continuation-local-storage'),
   isGeneratorFn = require('is-generator').fn,
   sort = require('toposort');
 
 const registry = {};
+const ns = cls.createNamespace('inject');
 
 function check(dependency) {
   if (dependency === 'next' || dependency in registry) {
@@ -16,80 +20,131 @@ function check(dependency) {
 function inject(fn, parameters, provides) {
     const generator = isGeneratorFn(fn);
 
-    return function*(next) {
-      const ctx = this;
+    return function* (next) {
       const dependencies = parameters.map(parameter => {
-        return parameter === 'next' ? next : ctx[parameter];
+        return parameter === 'next' ? next : ns.get(parameter);
       });
-      const result = fn.apply(ctx, dependencies);
+      const result = fn.apply(this, dependencies);
 
       if (generator) {
         yield result;
-      } else {
-        yield Promise.resolve(result).then(function(value) {
-          if (provides) {
-            ctx[provides] = value;
-          }
-        });
-      }
 
-      if (provides && ctx[provides] === undefined) {
-        throw new Error(`value not provided, did your provider set this.${provides}?`);
+        if (provides) {
+          const value = this.state[provides] || this[provides];
+
+          if (typeof value === 'undefined') {
+            throw new Error(`Generator did not set this.state.${provides}`);
+          }
+
+          ns.set(provides, value);
+        }
+      } else {
+        const value = yield Promise.resolve(result);
+
+        if (provides) {
+          if (typeof value === 'undefined') {
+            throw new Error(`Function did not return a value for ${provides}`)
+          }
+
+          ns.set(provides, value);
+        }
       }
     };
 }
 
-module.exports = function(arg) {
-  if (typeof arg === 'function') {
-    const parameters = getParameterNames(arg);
+function* initialize(next) {
+  const first = typeof this.state.inject === 'undefined';
 
-    parameters.forEach(check);
+  if (first) {
+    this.state.inject = ns.createContext();
+    ns.enter(this.state.inject);
+  }
 
-    return inject(arg, parameters);
-  } else if (arg && typeof arg === 'object') {
-    const nodes = [], edges = [];
+  try {
+    yield* next;
+  } finally {
+    if (first) {
+      ns.exit(this.state.inject);
+    }
+  }
+}
 
-    Object.keys(arg).forEach(key => {
-      if (key in registry) {
-        throw new Error(`${key} is already registered`);
-      }
+function consumer(fn) {
+  const parameters = getParameterNames(fn);
 
-      const fn = arg[key];
+  parameters.forEach(check);
 
-      if (typeof fn === 'function') {
-        const parameters = getParameterNames(fn);
+  return compose([
+    initialize,
+    inject(fn, parameters)
+  ]);
+}
 
-        parameters.forEach(parameter => {
-          if (parameter === 'next') {
-            return;
-          }
+function producer(arg) {
+  const nodes = [], edges = [];
 
-          if (parameter in arg) {
-            edges.push([parameter, key]);
-          } else {
-            check(parameter);
-          }
-        });
+  Object.keys(arg).forEach(key => {
+    if (key in registry) {
+      throw new Error(`${key} is already registered`);
+    }
 
-        nodes.push(key);
-        registry[key] = inject(fn, parameters, key);
-      } else {
-        throw new Error(`${key} must be a provider function`);
-      }
-    });
+    const fn = arg[key];
 
-    const providers = compose(sort.array(nodes, edges).map(key => {
-      return function* (next) {
-        yield registry[key].call(this, next);
-        yield* next;
-      }
-    }));
+    if (typeof fn === 'function') {
+      const parameters = getParameterNames(fn);
 
+      parameters.forEach(parameter => {
+        if (parameter === 'next') {
+          return;
+        }
+
+        if (parameter in arg) {
+          edges.push([parameter, key]);
+        } else {
+          check(parameter);
+        }
+      });
+
+      nodes.push(key);
+      registry[key] = inject(fn, parameters, key);
+    } else {
+      throw new Error(`${key} must be a provider function`);
+    }
+  });
+
+  const providers = compose(sort.array(nodes, edges).map(key => {
     return function* (next) {
+      yield registry[key].call(this, next);
+      yield* next;
+    }
+  }));
+
+  return function* (next) {
+    const first = typeof this.state.inject === 'undefined';
+
+    if (first) {
+      this.state.inject = ns.createContext();
+      ns.enter(this.state.inject);
+    }
+
+    try {
       yield providers;
       yield* next;
-    };
-  } else {
-    throw new Error('inject() requires either a provider definition object or a dependency function');
-  }
+    } finally {
+      if (first) {
+        ns.exit(this.state.inject);
+      }
+    }
+  };
+}
+
+module.exports = function (arg) {
+  assert(arg && typeof arg === 'object' || typeof arg === 'function',
+    'inject() requires either a producer object or a consumer function');
+
+  return typeof arg === 'function' ? consumer(arg) : producer(arg);
 };
+
+module.exports.get = function (key) {
+  return ns.get(key);
+}
