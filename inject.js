@@ -7,8 +7,8 @@ const assert = require('assert'),
   isGeneratorFn = require('is-generator').fn,
   sort = require('toposort');
 
-const registry = {};
-const ns = cls.createNamespace('inject');
+const registry = process.__provided_injection = (process.__provided_injection || {});
+const ns = cls.getNamespace('inject') || cls.createNamespace('inject');
 
 function check(dependency) {
   if (dependency === 'next' || dependency in registry) {
@@ -81,7 +81,7 @@ function consumer(fn) {
 }
 
 function producer(arg) {
-  const nodes = [], edges = [];
+  const nodes = [], edges = [], values = {};
 
   Object.keys(arg).forEach(key => {
     if (key in registry) {
@@ -90,31 +90,30 @@ function producer(arg) {
 
     const fn = arg[key];
 
-    if (typeof fn === 'function') {
-      const parameters = getParameterNames(fn);
+    assert(typeof fn === 'function', `${key} must be a function`);
 
-      parameters.forEach(parameter => {
-        if (parameter === 'next') {
-          return;
-        }
+    const parameters = getParameterNames(fn);
 
-        if (parameter in arg) {
-          edges.push([parameter, key]);
-        } else {
-          check(parameter);
-        }
-      });
+    parameters.forEach(parameter => {
+      if (parameter === 'next') {
+        return;
+      }
 
-      nodes.push(key);
-      registry[key] = inject(fn, parameters, key);
-    } else {
-      throw new Error(`${key} must be a provider function`);
-    }
+      if (parameter in arg) {
+        edges.push([parameter, key]);
+      } else {
+        check(parameter);
+      }
+    });
+
+    nodes.push(key);
+    values[key] = inject(fn, parameters, key)
+    registry[key] = true;
   });
 
   const providers = compose(sort.array(nodes, edges).map(key => {
     return function* (next) {
-      yield registry[key].call(this, next);
+      yield values[key].call(this, next);
       yield* next;
     }
   }));
