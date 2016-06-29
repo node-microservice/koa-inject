@@ -17,13 +17,22 @@ function check(dependency) {
   throw new Error(`${dependency} is not registered`);
 }
 
+function set(key, value) {
+  ns.get('state')[key] = value;
+}
+
+function get(key) {
+  return ns.get('state')[key];
+}
+
 function inject(fn, parameters, provides) {
     const generator = isGeneratorFn(fn);
 
     return function* (next) {
       const dependencies = parameters.map(parameter => {
-        return parameter === 'next' ? next : ns.get(parameter);
+        return parameter === 'next' ? next : get(parameter);
       });
+
       const result = fn.apply(this, dependencies);
 
       if (generator) {
@@ -33,10 +42,10 @@ function inject(fn, parameters, provides) {
           const value = this.state[provides] || this[provides];
 
           if (typeof value === 'undefined') {
-            throw new Error(`Generator did not set this.state.${provides}`);
+            throw new Error(`Generator did not set ${provides}`);
           }
 
-          ns.set(provides, value);
+          set(provides, value);
         }
       } else {
         const value = yield Promise.resolve(result);
@@ -46,26 +55,25 @@ function inject(fn, parameters, provides) {
             throw new Error(`Function did not return a value for ${provides}`)
           }
 
-          ns.set(provides, value);
+          set(provides, value);
         }
       }
     };
 }
 
 function* initialize(next) {
-  const first = typeof this.state.inject === 'undefined';
-
-  if (first) {
+  if (typeof this.state.inject === 'undefined') {
     this.state.inject = ns.createContext();
-    ns.enter(this.state.inject);
-  }
 
-  try {
-    yield* next;
-  } finally {
-    if (first) {
+    ns.enter(this.state.inject);
+    ns.set('state', this.state);
+    try {
+      yield* next;
+    } finally {
       ns.exit(this.state.inject);
     }
+  } else {
+    yield* next;
   }
 }
 
@@ -118,23 +126,13 @@ function producer(arg) {
     }
   }));
 
-  return function* (next) {
-    const first = typeof this.state.inject === 'undefined';
-
-    if (first) {
-      this.state.inject = ns.createContext();
-      ns.enter(this.state.inject);
-    }
-
-    try {
+  return compose([
+    initialize,
+    function* (next) {
       yield providers;
       yield* next;
-    } finally {
-      if (first) {
-        ns.exit(this.state.inject);
-      }
     }
-  };
+  ]);
 }
 
 module.exports = function (arg) {
@@ -144,6 +142,5 @@ module.exports = function (arg) {
   return typeof arg === 'function' ? consumer(arg) : producer(arg);
 };
 
-module.exports.get = function (key) {
-  return ns.get(key);
-}
+module.exports.set = set;
+module.exports.get = get;
