@@ -1,7 +1,7 @@
 'use strict';
 const assert = require('assert'),
   koa = require('koa'),
-  supertest = require('supertest'),
+  supertest = require('supertest-as-promised'),
   inject = require('./inject');
 
 let app;
@@ -10,7 +10,8 @@ beforeEach(function() {
   app = koa();
 });
 
-it('passes through', function(done) {
+it('passes through', function() {
+
   app.use(inject(function* (next) {
     let status = yield new Promise(resolve => {
       setTimeout(function() {
@@ -19,13 +20,13 @@ it('passes through', function(done) {
     });
     this.status = status;
   }));
-  supertest(app.callback())
+
+  return supertest(app.callback())
     .get('/')
-    .expect(201)
-    .end(done);
+    .expect(201);
 });
 
-it('works', function(done) {
+it('works', function() {
   let fooValue,
     barValue,
     bazValue;
@@ -34,6 +35,7 @@ it('works', function(done) {
     this.blah = 'blah';
     yield* next;
   });
+  app.use(inject.initialize());
   app.use(inject({
     foo: function() {
       return Promise.resolve(1);
@@ -67,19 +69,19 @@ it('works', function(done) {
     this.status = 200;
   }));
 
-  supertest(app.callback())
+  return supertest(app.callback())
     .get('/')
     .expect(200)
-    .end(function() {
+    .then(function() {
       assert.equal(fooValue, 1);
       assert.equal(barValue, 'bar1');
       assert.equal(bazValue, 'bar1baz');
-      done();
     });
 });
 
 // this is important to make things like constructor objects (Mongoose models, as an example) available for inejction.
-it('does not call a function that is returned', function(done) {
+it('does not call a function that is returned', function() {
+  app.use(inject.initialize());
   app.use(inject({
     func: function() {
       return function() {
@@ -87,19 +89,17 @@ it('does not call a function that is returned', function(done) {
       };
     }
   }));
-
   app.use(inject(function* (func) {
     assert.equal(typeof func, 'function');
     this.status = 204;
   }));
 
-  supertest(app.callback())
+  return supertest(app.callback())
     .get('/')
-    .expect(204)
-    .end(done);
+    .expect(204);
 });
 
-it('lets you use .get inside a timeout', function(done) {
+it('lets you use .get inside a timeout', function() {
   function getQwerty() {
     return new Promise(resolve => {
       setTimeout(() => {
@@ -108,6 +108,7 @@ it('lets you use .get inside a timeout', function(done) {
     });
   }
 
+  app.use(inject.initialize());
   app.use(inject({
     qwerty: function () {
       return 'qwerty';
@@ -119,13 +120,12 @@ it('lets you use .get inside a timeout', function(done) {
     this.status = 202;
   });
 
-  supertest(app.callback())
+  return supertest(app.callback())
     .get('/')
-    .expect(202)
-    .end(done);
+    .expect(202);
 });
 
-it('errors when middleware does not set this[key]', function(done) {
+it('errors when middleware does not set this[key]', function() {
   app.use(inject({
     asdf: function* (next) {
       yield new Promise(function(resolve) {
@@ -135,24 +135,9 @@ it('errors when middleware does not set this[key]', function(done) {
     }
   }));
 
-  supertest(app.callback())
+  return supertest(app.callback())
     .get('/')
-    .expect(500)
-    .end(done);
-});
-
-it('throws on unsatisfied dependency in provider', function() {
-  assert.throws(function() {
-    inject({
-      fail: function(a) {}
-    });
-  });
-});
-
-it('throws on unsatisfied dependency in function', function() {
-  assert.throws(function() {
-    inject(function(b) {});
-  });
+    .expect(500);
 });
 
 it('throws on cyclic dependency', function() {
